@@ -1,0 +1,4 @@
+dataset/
+raw_downloads/
+.venv/
+__pycache__/
