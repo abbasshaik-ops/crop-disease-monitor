@@ -332,8 +332,9 @@ def predict_leaf(image: Image.Image, model, labels):
     return predicted_class, confidence
 
 # --- UI Layout ---
-st.title("🌿 Crop Health & Disease Monitoring")
+st.title("𝘊𝘳𝘰𝘱 𝘏𝘦𝘢𝘭𝘵𝘩 𝘢𝘯𝘥 𝘋𝘪𝘴𝘦𝘢𝘴𝘦 𝘔𝘰𝘯𝘪𝘵𝘰𝘳𝘪𝘯𝘨")
 st.write("Scan a plant leaf using your device camera or upload a photo to detect diseases across **6 crops** and **29 conditions**.")
+
 
 model, class_labels = load_model_and_labels()
 
@@ -417,6 +418,28 @@ st.markdown(
         <strong>2. Natural Daylight:</strong> Capture photos in bright, even daylight—avoid harsh shadows or camera flash glare.<br>
         <strong>3. Automatic Leaf Filter:</strong> Non-leaf objects (walls, hands, soil) are automatically filtered out using HSV foliage validation.<br>
         <strong>4. Agronomist Advisory:</strong> Chemical and organic dosages serve as preliminary field guidance—always verify local agricultural extension labels before spraying.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# --- Bottom Ownership & Copyright Footer ---
+st.divider()
+st.markdown(
+    """
+    <div style="border: 1px solid rgba(134, 239, 172, 0.32); border-radius: 14px; padding: 1rem 1.2rem; margin-top: 0.5rem; text-align: center; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);">
+        <div style="color: #bbf7d0; font-weight: 700; font-size: 0.95rem; margin-bottom: 0.35rem;">
+            🛡️ Developed &amp; Owned by Shaik Muhammad Abbas
+        </div>
+        <div style="color: #f0fdf4; font-size: 0.88rem; margin-bottom: 0.3rem;">
+            🔒 Copyright © 2026 Shaik Muhammad Abbas &nbsp;|&nbsp;
+            <a href="https://github.com/abbasshaik-ops/crop-disease-monitor" target="_blank" style="color: #86efac; text-decoration: underline; font-weight: 600;">
+                GitHub: abbasshaik-ops/crop-disease-monitor
+            </a>
+        </div>
+        <div style="color: #dcfce7; font-size: 0.82rem;">
+            © 2026 All Rights Reserved.
+        </div>
     </div>
     """,
     unsafe_allow_html=True
