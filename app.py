@@ -1,446 +1,555 @@
-# app.py
-import os
-import json
 import base64
+import json
+import os
+import time
+from google import genai
+from google.genai import types
 import numpy as np
-import streamlit as st
-import tensorflow as tf
 from PIL import Image
-from utils.remedies import get_remedy
+import streamlit as st
 
-# Page Configuration
 st.set_page_config(
-    page_title="Crop Health & Disease Monitoring",
+    page_title="Crop Health and Disease Monitoring",
     page_icon="🌿",
-    layout="centered"
+    layout="wide",
 )
 
-def get_base64_image(image_path: str) -> str:
-    with open(image_path, "rb") as img_file:
-        return base64.b64encode(img_file.read()).decode()
+BG_IMAGE_PATH = "assets/leaf_bg.jpg"
 
-def resolve_asset_image(base_path_no_ext: str):
-    for ext in [".jpg", ".jpeg", ".png", ".webp"]:
-        candidate = base_path_no_ext + ext
-        if os.path.exists(candidate):
-            return candidate
-    return None
-
-# Custom Leaf Image Background + Transparent Text with Translucent Border Lines
-def apply_leaf_theme(bg_base_path: str = "assets/leaf_bg"):
-    bg_image_path = resolve_asset_image(bg_base_path)
-    if bg_image_path and os.path.exists(bg_image_path):
-        ext = os.path.splitext(bg_image_path)[1].lower().replace(".", "")
-        if ext == "jpg":
-            ext = "jpeg"
-        b64_str = get_base64_image(bg_image_path)
-        bg_css = f"""
-            background-image: 
-                linear-gradient(180deg, rgba(6, 20, 12, 0.60) 0%, rgba(8, 26, 15, 0.54) 50%, rgba(6, 20, 12, 0.68) 100%),
-                url("data:image/{ext};base64,{b64_str}");
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            background-attachment: fixed;
-        """
-    else:
-        bg_css = """
-            background: linear-gradient(145deg, #0d2818 0%, #164229 48%, #1e5635 100%);
-        """
-
-    st.markdown(
-        f"""
-        <style>
-        /* Main App Background */
-        .stApp {{
-            {bg_css}
-            color: #f0fdf4;
-        }}
-
-        /* Fully Transparent Header Bar */
-        header[data-testid="stHeader"] {{
-            background: transparent !important;
-        }}
-
-        /* Transparent Main Container (No Solid Box, Only Subtle Translucent Hairline Border) */
-        .block-container {{
-            background: transparent !important;
-            border: 1px solid rgba(134, 239, 172, 0.28);
-            border-radius: 18px;
-            padding: 2rem 2rem 2.5rem 2rem !important;
-            margin-top: 1.5rem;
-            margin-bottom: 2rem;
-        }}
-
-        /* Crisp Text Directly Over Leaf Background */
-        h1 {{
-            color: #ffffff !important;
-            font-weight: 800 !important;
-            letter-spacing: -0.5px;
-            text-shadow: 0 2px 14px rgba(0, 0, 0, 0.78);
-            padding-bottom: 0.6rem;
-            border-bottom: 1px solid rgba(134, 239, 172, 0.32);
-        }}
-        h2, h3 {{
-            color: #bbf7d0 !important;
-            font-weight: 700 !important;
-            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.75);
-            padding-bottom: 0.35rem;
-            border-bottom: 1px solid rgba(134, 239, 172, 0.25);
-        }}
-        p, label, li, .stMarkdown, .stCaption {{
-            color: #f0fdf4 !important;
-            text-shadow: 0 1px 8px rgba(0, 0, 0, 0.85);
-        }}
-
-        /* Horizontal Divider Line */
-        hr {{
-            border-color: rgba(134, 239, 172, 0.3) !important;
-        }}
-
-        /* Transparent Tabs with Translucent Line Borders */
-        .stTabs [data-baseweb="tab-list"] {{
-            gap: 10px;
-            background: transparent !important;
-            padding: 6px;
-            border-radius: 12px;
-            border: 1px solid rgba(134, 239, 172, 0.3);
-        }}
-        .stTabs [data-baseweb="tab"] {{
-            background: transparent !important;
-            border-radius: 8px;
-            color: #dcfce7 !important;
-            font-weight: 600;
-            padding: 8px 18px;
-            text-shadow: 0 1px 6px rgba(0, 0, 0, 0.75);
-        }}
-        .stTabs [aria-selected="true"] {{
-            background: rgba(34, 197, 94, 0.22) !important;
-            border: 1px solid rgba(134, 239, 172, 0.55) !important;
-            color: #ffffff !important;
-        }}
-
-        /* Transparent File Uploader & Camera Zone with Translucent Dashed Line */
-        [data-testid="stFileUploaderDropzone"], [data-testid="stCameraInput"] {{
-            background: transparent !important;
-            border: 1px dashed rgba(134, 239, 172, 0.45) !important;
-            border-radius: 14px !important;
-            padding: 1rem !important;
-        }}
-
-        /* Transparent Buttons with Translucent Line Border */
-        .stButton > button {{
-            background: rgba(22, 163, 74, 0.25) !important;
-            color: #ffffff !important;
-            border: 1px solid rgba(134, 239, 172, 0.55) !important;
-            border-radius: 10px !important;
-            font-weight: 600 !important;
-            text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
-            transition: all 0.15s ease;
-        }}
-        .stButton > button:hover {{
-            background: rgba(34, 197, 94, 0.4) !important;
-            border-color: #86efac !important;
-        }}
-
-        /* Progress Bar */
-        .stProgress > div > div {{
-            background-color: rgba(255, 255, 255, 0.15) !important;
-        }}
-        .stProgress > div > div > div > div {{
-            background: linear-gradient(90deg, #86efac, #22c55e) !important;
-        }}
-
-        /* Transparent Remedy Blockquotes with Translucent Line Border */
-        blockquote {{
-            background: transparent !important;
-            border: 1px solid rgba(134, 239, 172, 0.3) !important;
-            border-left: 3px solid rgba(134, 239, 172, 0.75) !important;
-            border-radius: 10px !important;
-            padding: 0.75rem 1rem !important;
-            color: #f0fdf4 !important;
-            text-shadow: 0 1px 8px rgba(0, 0, 0, 0.85);
-        }}
-
-        /* Transparent Inline Code Badges with Translucent Line Border */
-        code {{
-            background: transparent !important;
-            color: #86efac !important;
-            border: 1px solid rgba(134, 239, 172, 0.45) !important;
-            border-radius: 6px;
-            padding: 2px 7px;
-            text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
-        }}
-
-        /* Transparent Alert / Severity Boxes with Translucent Line Border */
-        [data-testid="stAlert"] {{
-            background: transparent !important;
-            border: 1px solid rgba(134, 239, 172, 0.4) !important;
-            border-radius: 12px !important;
-            color: #f0fdf4 !important;
-        }}
-
-        /* Captured Leaf & Crop Thumbnail Frames */
-        [data-testid="stImage"] img {{
-            border-radius: 12px;
-            border: 1px solid rgba(134, 239, 172, 0.42);
-        }}
-
-        /* Translucent Hairline Frame for Crop Info Tiles (No Solid Box Fill) */
-        .crop-tile {{
-            background: transparent;
-            border: 1px solid rgba(134, 239, 172, 0.32);
-            border-radius: 14px;
-            padding: 0.75rem;
-            margin-bottom: 0.85rem;
-            text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
-        }}
-        .crop-tile-title {{
-            color: #bbf7d0;
-            font-size: 1.02rem;
-            font-weight: 700;
-            margin-bottom: 0.2rem;
-        }}
-        .crop-tile-count {{
-            display: inline-block;
-            border: 1px solid rgba(134, 239, 172, 0.45);
-            color: #86efac;
-            font-size: 0.76rem;
-            font-weight: 600;
-            padding: 1px 8px;
-            border-radius: 999px;
-            margin-bottom: 0.45rem;
-        }}
-        .crop-tile-desc {{
-            color: #ecfdf5;
-            font-size: 0.84rem;
-            line-height: 1.4;
-        }}
-        .info-strip {{
-            background: transparent;
-            border: 1px solid rgba(134, 239, 172, 0.32);
-            border-left: 3px solid rgba(134, 239, 172, 0.75);
-            border-radius: 12px;
-            padding: 0.85rem 1.1rem;
-            margin-top: 0.5rem;
-            font-size: 0.9rem;
-            line-height: 1.55;
-            text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-apply_leaf_theme("assets/leaf_bg")
-
-MODEL_PATH = "models/crop_disease_model.keras"
-LABELS_PATH = "models/class_labels.json"
-IMG_SIZE = (224, 224)
-
-CROP_CATALOG = [
+CROP_CARDS = [
     {
         "name": "Mango",
         "image": "assets/crops/mango.jpg",
-        "count": "8 Classes (7 Diseases + Healthy)",
-        "details": "Anthracnose, Bacterial Canker, Cutting Weevil, Die Back, Gall Midge, Powdery Mildew, Sooty Mould, Healthy."
+        "badge": "8 Classes (7 Diseases + Healthy)",
+        "desc": (
+            "Anthracnose, Bacterial Canker, Cutting Weevil, Die Back, Gall"
+            " Midge, Powdery Mildew, Sooty Mould, Healthy."
+        ),
     },
     {
         "name": "Brinjal (Eggplant)",
-        "image": "assets/crops/brinjal.jpg",
-        "count": "7 Classes (6 Diseases + Healthy)",
-        "details": "Insect Pest, Leaf Spot, Mosaic Virus, Little Leaf, White Mold, Wilt Disease, Healthy."
+        "image": "assets/crops/brinjal.jpeg",
+        "badge": "7 Classes (6 Diseases + Healthy)",
+        "desc": (
+            "Insect Pest, Leaf Spot, Mosaic Virus, Little Leaf, White Mold,"
+            " Wilt Disease, Healthy."
+        ),
     },
     {
         "name": "Groundnut",
-        "image": "assets/crops/groundnut.jpg",
-        "count": "5 Classes (4 Conditions + Healthy)",
-        "details": "Early Leaf Spot (Tikka), Late Leaf Spot, Rust, Nutrient Deficiency, Healthy."
+        "image": "assets/crops/groundnut.jpeg",
+        "badge": "5 Classes (4 Conditions + Healthy)",
+        "desc": (
+            "Early Leaf Spot (Tikka), Late Leaf Spot, Rust, Nutrient"
+            " Deficiency, Healthy."
+        ),
     },
     {
         "name": "Sugarcane",
-        "image": "assets/crops/sugarcane.jpg",
-        "count": "5 Classes (4 Diseases + Healthy)",
-        "details": "Mosaic Virus, Red Rot / Red Spot, Rust, Yellow Leaf Disease, Healthy."
+        "image": "assets/crops/sugarcane.jpeg",
+        "badge": "5 Classes (4 Diseases + Healthy)",
+        "desc": (
+            "Mosaic Virus, Red Rot / Red Spot, Rust, Yellow Leaf Disease,"
+            " Healthy."
+        ),
     },
     {
         "name": "Tomato",
         "image": "assets/crops/tomato.jpg",
-        "count": "2 Blight Classes",
-        "details": "Early Blight (Alternaria solani) & Late Blight (Phytophthora infestans)."
+        "badge": "2 Blight Classes",
+        "desc": (
+            "Early Blight (Alternaria solani) & Late Blight (Phytophthora"
+            " infestans)."
+        ),
     },
     {
         "name": "Rice (Paddy)",
-        "image": "assets/crops/rice.jpg",
-        "count": "2 Classes (1 Disease + Healthy)",
-        "details": "Sheath Blight (Rhizoctonia solani) & Healthy Leaf."
-    }
+        "image": "assets/crops/rice.jpeg",
+        "badge": "2 Classes (1 Disease + Healthy)",
+        "desc": "Sheath Blight (Rhizoctonia solani) & Healthy Leaf.",
+    },
 ]
 
+SUPPORTED_CLASSES = [
+    "Mango - Anthracnose",
+    "Mango - Bacterial Canker",
+    "Mango - Cutting Weevil",
+    "Mango - Die Back",
+    "Mango - Gall Midge",
+    "Mango - Healthy",
+    "Mango - Powdery Mildew",
+    "Mango - Sooty Mould",
+    "Brinjal - Healthy",
+    "Brinjal - Insect Pest",
+    "Brinjal - Leaf Spot",
+    "Brinjal - Little Leaf",
+    "Brinjal - Mosaic Virus",
+    "Brinjal - White Mold",
+    "Brinjal - Wilt Disease",
+    "Groundnut - Early Leaf Spot",
+    "Groundnut - Healthy",
+    "Groundnut - Late Leaf Spot",
+    "Groundnut - Nutrient Deficiency",
+    "Groundnut - Rust",
+    "Sugarcane - Healthy",
+    "Sugarcane - Mosaic",
+    "Sugarcane - Red Rot",
+    "Sugarcane - Rust",
+    "Sugarcane - Yellow Leaf",
+    "Tomato - Early Blight",
+    "Tomato - Late Blight",
+    "Rice - Healthy",
+    "Rice - Sheath Blight",
+]
+
+
+def get_base64_image(image_path: str) -> str:
+  if not os.path.exists(image_path):
+    return ""
+  with open(image_path, "rb") as f:
+    return base64.b64encode(f.read()).decode()
+
+
+def inject_custom_css(bg_path: str) -> None:
+  encoded_bg = get_base64_image(bg_path)
+  bg_rule = (
+      f"""
+        background-image: linear-gradient(
+            rgba(7, 18, 12, 0.72),
+            rgba(7, 18, 12, 0.80)
+        ), url("data:image/jpeg;base64,{encoded_bg}");
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+        """
+      if encoded_bg
+      else "background-color: #0b1912;"
+  )
+
+  st.markdown(
+      f"""
+        <style>
+        .stApp {{
+            {bg_rule}
+            color: #f3f7f4;
+        }}
+        .block-container {{
+            max-width: 960px;
+            padding-top: 2rem;
+            padding-bottom: 3rem;
+        }}
+        .hero-title {{
+            font-size: 2.35rem;
+            font-weight: 800;
+            line-height: 1.15;
+            color: #ffffff;
+            margin-bottom: 0.5rem;
+        }}
+        .hero-sub {{
+            font-size: 1rem;
+            color: #d6e4da;
+            margin-bottom: 1.25rem;
+        }}
+        .section-heading {{
+            font-size: 1.45rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-top: 1.75rem;
+            margin-bottom: 0.4rem;
+        }}
+        .section-sub {{
+            font-size: 0.95rem;
+            color: #cfe0d4;
+            margin-bottom: 1rem;
+        }}
+        .crop-badge {{
+            display: inline-block;
+            background: rgba(20, 46, 31, 0.85);
+            border: 1px solid rgba(110, 207, 138, 0.35);
+            color: #9be7b0;
+            font-size: 0.76rem;
+            font-weight: 600;
+            padding: 0.2rem 0.55rem;
+            border-radius: 6px;
+            margin-bottom: 0.45rem;
+        }}
+        .crop-desc {{
+            font-size: 0.84rem;
+            color: #dce8df;
+            line-height: 1.45;
+            margin-bottom: 1.1rem;
+        }}
+        .guidelines-box {{
+            background: rgba(11, 24, 17, 0.78);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 12px;
+            padding: 1.15rem 1.35rem;
+            margin-top: 0.75rem;
+            margin-bottom: 1.5rem;
+        }}
+        .guidelines-box p {{
+            margin: 0.45rem 0;
+            font-size: 0.9rem;
+            color: #e6efe8;
+            line-height: 1.5;
+        }}
+        .hsv-pill {{
+            display: inline-block;
+            background: rgba(16, 28, 22, 0.82);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 8px;
+            padding: 0.35rem 0.7rem;
+            font-size: 0.85rem;
+            color: #d7e4db;
+            margin-bottom: 0.85rem;
+        }}
+        .severity-banner {{
+            background: rgba(24, 34, 48, 0.9);
+            border: 1px solid rgba(120, 155, 210, 0.35);
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            font-weight: 600;
+            color: #eef4ff;
+            margin-bottom: 1rem;
+        }}
+        .remedy-label {{
+            font-size: 1rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-top: 0.75rem;
+            margin-bottom: 0.35rem;
+        }}
+        .remedy-box {{
+            background: rgba(12, 24, 18, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 10px;
+            padding: 0.7rem 0.95rem;
+            font-size: 0.92rem;
+            color: #e8f1ea;
+            line-height: 1.5;
+        }}
+        .warning-card {{
+            background: rgba(58, 20, 22, 0.88);
+            border: 1px solid rgba(248, 113, 113, 0.45);
+            border-radius: 10px;
+            padding: 0.9rem 1.1rem;
+            color: #ffe4e6;
+            font-size: 0.92rem;
+            line-height: 1.5;
+        }}
+        .footer-box {{
+            text-align: center;
+            color: #c7d8cc;
+            font-size: 0.84rem;
+            line-height: 1.7;
+            margin-top: 1.5rem;
+        }}
+        .footer-box a {{
+            color: #9be7b0;
+            text-decoration: none;
+        }}
+        div[data-testid="stFileUploaderDropzone"] {{
+            background: rgba(14, 26, 20, 0.78);
+            border: 1px dashed rgba(255, 255, 255, 0.28);
+            border-radius: 10px;
+        }}
+        </style>
+        """,
+      unsafe_allow_html=True,
+  )
+
+
 @st.cache_resource
-def load_model_and_labels():
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(LABELS_PATH):
-        return None, None
-    model = tf.keras.models.load_model(MODEL_PATH)
-    with open(LABELS_PATH, "r") as f:
-        labels = json.load(f)
-    return model, labels
-
-def is_likely_a_leaf(image: Image.Image) -> tuple[bool, str, float]:
-    """
-    Validates if an image is a plant leaf using HSV color space analysis.
-    Accurately detects green leaves and yellow/brown diseased spots while 
-    strictly rejecting skin, walls, and non-plant objects.
-    """
-    img_rgb = image.convert("RGB").resize((150, 150))
-    img_hsv = img_rgb.convert("HSV")
-    hsv_arr = np.array(img_hsv)
-    
-    h = hsv_arr[:, :, 0].astype(float)
-    s = hsv_arr[:, :, 1].astype(float)
-    v = hsv_arr[:, :, 2].astype(float)
-    
-    mean_brightness = np.mean(v)
-    if mean_brightness < 20:
-        return False, "The image is too dark. Please use better lighting.", 0.0
-    if mean_brightness > 245:
-        return False, "The image is overexposed (too bright/glaring).", 0.0
-    
-    green_mask = (h >= 30) & (h <= 100) & (s > 35) & (v > 30)
-    green_ratio = np.sum(green_mask) / green_mask.size
-    
-    disease_spot_mask = (h >= 10) & (h < 30) & (s > 30) & (v > 30)
-    spot_ratio = np.sum(disease_spot_mask) / disease_spot_mask.size
-    
-    plant_score = green_ratio + spot_ratio
-    
-    if plant_score < 0.15:
-        return False, f"⚠️ **Not a leaf detected!** (Plant Score: {plant_score:.3f}). Please point your camera or upload a clear picture of a plant leaf.", plant_score
-        
-    return True, "Valid leaf detected.", plant_score
-
-def predict_leaf(image: Image.Image, model, labels):
-    image_resized = image.convert("RGB").resize(IMG_SIZE)
-    img_array = tf.keras.utils.img_to_array(image_resized)
-    img_array = np.expand_dims(img_array, axis=0)
-
-    predictions = model.predict(img_array)[0]
-    top_idx = int(np.argmax(predictions))
-    confidence = float(predictions[top_idx]) * 100
-    predicted_class = labels[top_idx]
-
-    return predicted_class, confidence
-
-# --- UI Layout ---
-st.title("𝘊𝘳𝘰𝘱 𝘏𝘦𝘢𝘭𝘵𝘩 𝘢𝘯𝘥 𝘋𝘪𝘴𝘦𝘢𝘴𝘦 𝘔𝘰𝘯𝘪𝘵𝘰𝘳𝘪𝘯𝘨")
-st.write("Scan a plant leaf using your device camera or upload a photo to detect diseases across **6 crops** and **29 conditions**.")
-
-
-model, class_labels = load_model_and_labels()
-
-if model is None:
-    st.error("⚠️ Trained model not found! Run `python train_model.py` first.")
+def get_gemini_client() -> genai.Client:
+  api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+  if not api_key:
+    st.error("GEMINI_API_KEY is missing. Add it in Streamlit Secrets.")
     st.stop()
+  return genai.Client(api_key=api_key)
 
-tab1, tab2 = st.tabs(["📁 Upload Leaf Photo", "📷 Scan via Camera"])
-selected_image = None
 
-with tab1:
-    uploaded_file = st.file_uploader("Choose a leaf image (JPG, JPEG, PNG)", type=["jpg", "jpeg", "png"])
-    if uploaded_file is not None:
-        selected_image = Image.open(uploaded_file)
+def get_hsv_leaf_score(image: Image.Image) -> float:
+  """Return foliage coverage ratio (0.0 to 1.0) using HSV hue and value thresholds."""
+  hsv = np.array(image.convert("RGB").resize((224, 224)).convert("HSV"))
+  h, _, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
 
-with tab2:
-    camera_photo = st.camera_input("Take a clear picture of the leaf")
-    if camera_photo is not None:
-        selected_image = Image.open(camera_photo)
+  valid_exposure = (v >= 20) & (v <= 245)
+  foliage_mask = valid_exposure & (h >= 15) & (h <= 145)
+  return float(np.mean(foliage_mask))
 
-if selected_image is not None:
-    st.divider()
-    col1, col2 = st.columns([1, 1.3])
 
-    with col1:
-        st.image(selected_image, caption="Captured Leaf Sample", use_container_width=True)
+def parse_confidence_pct(raw_conf) -> float:
+  if isinstance(raw_conf, (int, float)):
+    val = float(raw_conf)
+    return val * 100.0 if 0.0 <= val <= 1.0 else max(0.0, min(100.0, val))
+  text = str(raw_conf).strip().replace("%", "")
+  try:
+    val = float(text)
+    return val * 100.0 if 0.0 <= val <= 1.0 else max(0.0, min(100.0, val))
+  except ValueError:
+    mapping = {"high": 88.0, "medium": 68.0, "low": 42.0}
+    return mapping.get(text.lower(), 75.0)
 
-    with col2:
-        with st.spinner("Validating leaf foliage..."):
-            is_valid, message, score = is_likely_a_leaf(selected_image)
 
-        st.caption(f"🔍 HSV Plant Score: `{score:.3f}` (Required: >0.15)")
+def analyze_leaf_image(image: Image.Image, language: str = "English") -> dict:
+  client = get_gemini_client()
+  prompt = f"""
+    You are an agricultural plant pathology assistant helping farmers in Tamil Nadu, India.
+    Examine the image and respond in {language} for text descriptions while keeping JSON keys exact.
 
-        if not is_valid:
-            st.error(message)
-        else:
-            with st.spinner("Analyzing leaf disease..."):
-                pred_class, confidence = predict_leaf(selected_image, model, class_labels)
-                remedy_info = get_remedy(pred_class)
+    1. Decide if the image shows a plant leaf or crop foliage.
+    2. Identify the crop and disease/condition. Prefer an exact label from this list when applicable:
+       {json.dumps(SUPPORTED_CLASSES)}
+    3. If outside the list, provide a clear "Crop - Condition" label.
 
-            st.subheader("🔬 Diagnosis Result")
-            st.markdown(f"**Detected Condition:** `{remedy_info['disease_name']}`")
-            st.markdown(f"**Crop Type:** {remedy_info['crop']}")
-            st.markdown(f"**Confidence Score:** `{confidence:.2f}%`")
-            st.progress(int(confidence))
-
-            st.subheader("💊 Recommended Treatment")
-            st.info(f"**Severity Level:** {remedy_info['severity']}")
-            st.markdown(f"**1. Chemical Medicine:**\n> {remedy_info['chemical_medicine']}")
-            st.markdown(f"**2. Organic Alternative:**\n> {remedy_info['organic_remedy']}")
-            st.markdown(f"**3. Preventive Measures:**\n> {remedy_info['prevention']}")
-
-# --- Supported Crops & Important User Info (Below Upload Area, Transparent with Translucent Borders) ---
-st.divider()
-st.subheader("🌱 Supported Crops & Disease Coverage (6 Crops · 29 Classes)")
-st.write("This AI diagnostic model is trained to identify healthy foliage and **24 distinct plant diseases/deficiencies** across the following crops:")
-
-for row_start in range(0, len(CROP_CATALOG), 3):
-    cols = st.columns(3)
-    for col, crop in zip(cols, CROP_CATALOG[row_start:row_start + 3]):
-        with col:
-            img_path = resolve_asset_image(os.path.splitext(crop["image"])[0])
-            if img_path:
-                st.image(img_path, use_container_width=True)
-            st.markdown(
-                f"""
-                <div class="crop-tile">
-                    <div class="crop-tile-title">{crop['name']}</div>
-                    <div class="crop-tile-count">{crop['count']}</div>
-                    <div class="crop-tile-desc">{crop['details']}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-st.subheader("📌 Important Scanning Guidelines")
-st.markdown(
+    Return ONLY valid JSON matching this schema:
+    {{
+        "is_leaf": true,
+        "matched_label": "Crop - Condition",
+        "crop": "Crop name",
+        "condition": "Disease or Healthy",
+        "confidence": "70.12%",
+        "severity": "Mild",
+        "visual_symptoms": "Short description of visible symptoms",
+        "organic_remedy": "Practical organic or cultural remedy",
+        "chemical_remedy": "Targeted control option with dosage or None required",
+        "preventive_measures": "Prevention steps for the field"
+    }}
     """
-    <div class="info-strip">
-        <strong>1. Single Leaf Focus:</strong> Hold one affected leaf close to the camera so the leaf fills most of the frame.<br>
-        <strong>2. Natural Daylight:</strong> Capture photos in bright, even daylight—avoid harsh shadows or camera flash glare.<br>
-        <strong>3. Automatic Leaf Filter:</strong> Non-leaf objects (walls, hands, soil) are automatically filtered out using HSV foliage validation.<br>
-        <strong>4. Agronomist Advisory:</strong> Chemical and organic dosages serve as preliminary field guidance—always verify local agricultural extension labels before spraying.
-    </div>
-    """,
-    unsafe_allow_html=True
+
+  models_to_try = [
+      "gemini-4-hydrogen",
+      "gemini-3.8-flash",
+      "gemini-3.6-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite-preview",
+      "gemini-3-flash-preview",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-lite",
+  ]
+  last_error = None
+
+  for model_name in models_to_try:
+    for attempt in range(2):
+      try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[image, prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.1,
+            ),
+        )
+        return json.loads(response.text)
+      except Exception as exc:
+        last_error = exc
+        err_str = str(exc)
+        # Retry once on transient overload, then move on to the next model
+        if "503" in err_str or "UNAVAILABLE" in err_str:
+          time.sleep(1.5 * (attempt + 1))
+          continue
+        # Immediately try the next model if quota/rate-limited or model ID unavailable
+        if (
+            "429" in err_str
+            or "RESOURCE_EXHAUSTED" in err_str
+            or "404" in err_str
+            or "NOT_FOUND" in err_str
+        ):
+          break
+        raise
+
+  raise last_error
+
+
+inject_custom_css(BG_IMAGE_PATH)
+
+st.markdown(
+    '<div class="hero-title">Crop Health and Disease Monitoring</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="hero-sub">Scan a plant leaf using your device camera or upload'
+    " a photo to detect diseases across 6 crops and 29 conditions.</div>",
+    unsafe_allow_html=True,
 )
 
-# --- Bottom Ownership & Copyright Footer ---
-st.divider()
+language = st.selectbox(
+    "Advisory Language", ["English", "Tamil", "Telugu"], label_visibility="collapsed"
+)
+
+tab_upload, tab_camera = st.tabs(["📁 Upload Leaf Photo", "📷 Scan via Camera"])
+
+selected_file = None
+with tab_upload:
+  selected_file = st.file_uploader(
+      "Choose a leaf image (JPG, JPEG, PNG)",
+      type=["jpg", "jpeg", "png", "webp"],
+  )
+
+with tab_camera:
+  camera_file = st.camera_input("Take a clear picture of the leaf")
+  if camera_file is not None:
+    selected_file = camera_file
+
+if selected_file is not None:
+  img = Image.open(selected_file).convert("RGB")
+  hsv_score = get_hsv_leaf_score(img)
+  passed_hsv = hsv_score > 0.15
+
+  left_col, right_col = st.columns([1, 1.45], gap="large")
+  with left_col:
+    st.image(img, use_container_width=True)
+    st.markdown(
+        '<div style="text-align:center; font-size:0.84rem; color:#cfe0d4;'
+        ' margin-top:0.25rem;">Captured Leaf Sample</div>',
+        unsafe_allow_html=True,
+    )
+
+  with right_col:
+    st.markdown(
+        f'<div class="hsv-pill">🌿 HSV Plant Score: <b>{hsv_score:.3f}</b>'
+        " (Required: &gt;0.15)</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not passed_hsv:
+      st.markdown(
+          f"""
+                <div class="warning-card">
+                    ⚠️ <b>Not a leaf detected!</b> (Plant Score: {hsv_score:.3f}).
+                    Please point your camera or upload a clear picture of a plant leaf.
+                </div>
+                """,
+          unsafe_allow_html=True,
+      )
+    else:
+      if st.button("Analyze Leaf", type="primary"):
+        with st.spinner("Analyzing leaf with Gemini Vision..."):
+          try:
+            result = analyze_leaf_image(img, language=language)
+            if not result.get("is_leaf", True):
+              st.markdown(
+                  f"""
+                                <div class="warning-card">
+                                    ⚠️ <b>Not a leaf detected!</b> (Plant Score: {hsv_score:.3f}).
+                                    Please point your camera or upload a clear picture of a plant leaf.
+                                </div>
+                                """,
+                  unsafe_allow_html=True,
+              )
+            else:
+              conf_pct = parse_confidence_pct(result.get("confidence", "75%"))
+              st.markdown(
+                  '<div class="section-heading" style="margin-top:0;">🔬'
+                  " Diagnosis Result</div>",
+                  unsafe_allow_html=True,
+              )
+              st.write(
+                  f"**Detected Condition:**"
+                  f" {result.get('matched_label', 'Unknown')}"
+              )
+              st.write(f"**Crop Type:** {result.get('crop', 'N/A')}")
+              st.write(f"**Confidence Score: `{conf_pct:.2f}%`")
+              st.progress(min(max(conf_pct / 100.0, 0.0), 1.0))
+
+              st.markdown(
+                  '<div class="section-heading">💊 Recommended'
+                  " Treatment</div>",
+                  unsafe_allow_html=True,
+              )
+              st.markdown(
+                  f'<div class="severity-banner">Severity Level:'
+                  f" {result.get('severity', 'Moderate')}</div>",
+                  unsafe_allow_html=True,
+              )
+
+              st.markdown(
+                  '<div class="remedy-label">1. Chemical Medicine:</div>',
+                  unsafe_allow_html=True,
+              )
+              st.markdown(
+                  '<div class="remedy-box">'
+                  f"{result.get('chemical_remedy', 'None required')}</div>",
+                  unsafe_allow_html=True,
+              )
+
+              st.markdown(
+                  '<div class="remedy-label">2. Organic Alternative:</div>',
+                  unsafe_allow_html=True,
+              )
+              st.markdown(
+                  '<div class="remedy-box">'
+                  f"{result.get('organic_remedy', 'N/A')}</div>",
+                  unsafe_allow_html=True,
+              )
+
+              st.markdown(
+                  '<div class="remedy-label">3. Preventive Measures:</div>',
+                  unsafe_allow_html=True,
+              )
+              st.markdown(
+                  '<div class="remedy-box">'
+                  f"{result.get('preventive_measures', 'N/A')}</div>",
+                  unsafe_allow_html=True,
+              )
+          except Exception as exc:
+            st.error(f"Analysis failed: {exc}")
+
+# Supported Crops & Disease Coverage Section
+st.markdown(
+    '<div class="section-heading">🌱 Supported Crops &amp; Disease Coverage (6'
+    " Crops · 29 Classes)</div>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="section-sub">This AI diagnostic model is trained to identify'
+    " healthy foliage and 24 distinct plant diseases/deficiencies across the"
+    " following crops:</div>",
+    unsafe_allow_html=True,
+)
+
+for row_start in range(0, len(CROP_CARDS), 3):
+  cols = st.columns(3, gap="medium")
+  for idx, card in enumerate(CROP_CARDS[row_start : row_start + 3]):
+    with cols[idx]:
+      if os.path.exists(card["image"]):
+        st.image(card["image"], use_container_width=True)
+      st.markdown(
+          f"**  \n"
+          f'<span class="crop-badge">{card["badge"]}</span>'
+          f'<div class="crop-desc">{card["desc"]}</div>',
+          unsafe_allow_html=True,
+      )
+
+# Important Scanning Guidelines Section
+st.markdown(
+    '<div class="section-heading">📌 Important Scanning Guidelines</div>',
+    unsafe_allow_html=True,
+)
 st.markdown(
     """
-    <div style="border: 1px solid rgba(134, 239, 172, 0.32); border-radius: 14px; padding: 1rem 1.2rem; margin-top: 0.5rem; text-align: center; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);">
-        <div style="color: #bbf7d0; font-weight: 700; font-size: 0.95rem; margin-bottom: 0.35rem;">
-            🛡️ Developed &amp; Owned by Shaik Muhammad Abbas
-        </div>
-        <div style="color: #f0fdf4; font-size: 0.88rem; margin-bottom: 0.3rem;">
-            🔒 Copyright © 2026 Shaik Muhammad Abbas &nbsp;|&nbsp;
-            <a href="https://github.com/abbasshaik-ops/crop-disease-monitor" target="_blank" style="color: #86efac; text-decoration: underline; font-weight: 600;">
-                GitHub: abbasshaik-ops/crop-disease-monitor
-            </a>
-        </div>
-        <div style="color: #dcfce7; font-size: 0.82rem;">
-            © 2026 All Rights Reserved.
-        </div>
+    <div class="guidelines-box">
+        <p><b>1. Single Leaf Focus:</b> Hold one affected leaf close to the camera so the leaf fills most of the frame.</p>
+        <p><b>2. Natural Daylight:</b> Capture photos in bright, even daylight—avoid harsh shadows or camera flash glare.</p>
+        <p><b>3. Automatic Leaf Filter:</b> Non-leaf objects (walls, hands, soil) are automatically filtered out using HSV foliage validation.</p>
+        <p><b>4. Agronomist Advisory:</b> Chemical and organic dosages serve as preliminary field guidance—always verify local agricultural extension labels before spraying.</p>
     </div>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
+)
+
+st.markdown("---")
+st.markdown(
+    """
+    <div class="footer-box">
+        <div>🌿 <b>Developed &amp; Owned by Shaik Muhammad Abbas</b></div>
+        <div>🔒 Copyright © 2026 Shaik Muhammad Abbas | GitHub:
+            <a href="https://github.com/abbasshaik-ops/crop-disease-monitor" target="_blank">
+                abbasshaik-ops/crop-disease-monitor
+            </a>
+        </div>
+        <div>© 2026 All Rights Reserved</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
